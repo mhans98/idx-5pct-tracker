@@ -48,7 +48,7 @@ def fetch_announcements(days_back=7):
 
     params = {
         "indexFrom": 0,
-        "pageSize": 30,
+        "pageSize": 100,
         "keyword": "5%",
         "dateFrom": date_from,
         "dateTo": date_to,
@@ -309,13 +309,41 @@ def clean(s):
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
-def run_scrape(days_back=7):
+def run_scrape(days_back=None):
     """
     Main scrape function. Returns dict with results.
     Called by Flask when user presses "Get Data".
+
+    Smart mode:
+      - If no existing data: fetch last 90 days (initial backfill)
+      - If existing data: fetch from last scrape date to today (incremental)
+      - days_back can override if given explicitly
     """
     ensure_dirs()
-    logger.info(f"Starting scrape (last {days_back} days)")
+
+    # Determine how far back to scrape
+    existing = load_data()
+    is_incremental = False
+
+    if days_back is not None:
+        # Explicit override
+        pass
+    elif existing and existing.get("scraped_at"):
+        # Incremental: from last scrape to today
+        try:
+            last_scrape = datetime.fromisoformat(existing["scraped_at"])
+            delta = (datetime.now() - last_scrape).days + 1  # +1 to overlap by 1 day
+            days_back = max(delta, 2)  # minimum 2 days
+            is_incremental = True
+            logger.info(f"Incremental mode: last scrape was {delta-1} day(s) ago")
+        except Exception:
+            days_back = 90
+    else:
+        # First time: big backfill
+        days_back = 90
+        logger.info("First scrape: fetching last 90 days")
+
+    logger.info(f"Starting scrape (last {days_back} days, incremental={is_incremental})")
 
     result = {
         "success": False,
@@ -324,8 +352,11 @@ def run_scrape(days_back=7):
         "pdfs_downloaded": 0,
         "pdfs_parsed": 0,
         "total_records": 0,
+        "new_records": 0,
         "records": [],
         "errors": [],
+        "mode": "incremental" if is_incremental else "backfill",
+        "days_back": days_back,
     }
 
     try:
@@ -334,9 +365,16 @@ def run_scrape(days_back=7):
 
         if not announcements:
             result["errors"].append("No announcements found from IDX API")
+            # If incremental and no new announcements, return existing data
+            if is_incremental and existing and existing.get("records"):
+                result["records"] = existing["records"]
+                result["total_records"] = len(existing["records"])
+                result["new_records"] = 0
+                result["success"] = True
+                save_data(existing["records"], result["scraped_at"])
             return result
 
-        all_records = []
+        new_records = []
         for ann in announcements:
             pdf_url = get_pdf_url(ann)
             if not pdf_url:
@@ -351,9 +389,16 @@ def run_scrape(days_back=7):
             records = parse_pdf(pdf_path)
             if records:
                 result["pdfs_parsed"] += 1
-                all_records.extend(records)
+                new_records.extend(records)
             else:
                 result["errors"].append(f"No records parsed from: {pdf_path.name}")
+
+        # Merge with existing data if incremental
+        all_records = []
+        if is_incremental and existing and existing.get("records"):
+            all_records = existing["records"] + new_records
+        else:
+            all_records = new_records
 
         # De-duplicate by (run_date, ticker, shareholder)
         seen = set()
@@ -364,11 +409,21 @@ def run_scrape(days_back=7):
                 seen.add(key)
                 unique.append(r)
 
-        # Sort by net_change descending
-        unique.sort(key=lambda x: abs(x["net_change"]), reverse=True)
+        # Sort by run_date desc, then net_change desc
+        unique.sort(key=lambda x: (x.get("run_date", ""), abs(x["net_change"])), reverse=True)
+
+        # Count genuinely new records
+        old_keys = set()
+        if is_incremental and existing and existing.get("records"):
+            for r in existing["records"]:
+                old_keys.add((r["run_date"], r["ticker"], r["shareholder"]))
+
+        new_count = sum(1 for r in unique
+                       if (r["run_date"], r["ticker"], r["shareholder"]) not in old_keys)
 
         result["records"] = unique
         result["total_records"] = len(unique)
+        result["new_records"] = new_count if is_incremental else len(unique)
         result["success"] = True
 
         # Save combined JSON
