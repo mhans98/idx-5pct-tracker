@@ -59,67 +59,102 @@ def fetch_announcements(days_back=7):
         "keyword": "5%",
     }
 
-    session = cffi_requests.Session(impersonate="chrome")
-    session.headers.update(HEADERS)
+    # Try multiple browser impersonations
+    impersonations = ["chrome120", "chrome", "chrome110", "chrome116", "edge101", "safari15_5"]
 
-    for api_url in IDX_API_URLS:
+    for imp in impersonations:
         try:
-            logger.info(f"Trying: {api_url}")
-            resp = session.get(api_url, params=params, timeout=30)
-            logger.info(f"Response status: {resp.status_code}")
+            logger.info(f"Trying impersonation: {imp}")
+            session = cffi_requests.Session(impersonate=imp)
+
+            # WARM UP: visit homepage first to get cookies/session
+            logger.info("Warming up session with homepage visit...")
+            warmup = session.get("https://www.idx.co.id/id", timeout=15)
+            logger.info(f"Homepage status: {warmup.status_code}")
+
+            # Now try the API
+            for api_url in IDX_API_URLS:
+                logger.info(f"Trying API: {api_url}")
+                resp = session.get(api_url, params=params, timeout=30)
+                logger.info(f"API status: {resp.status_code}")
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results = extract_results(data)
+                    if results:
+                        logger.info(f"Found {len(results)} announcements via {imp}")
+                        return results, session
+                    else:
+                        logger.warning(f"API returned OK but no results. Keys: {list(data.keys()) if isinstance(data, dict) else 'not dict'}")
+                        logger.info(f"Response snippet: {resp.text[:300]}")
+                elif resp.status_code == 403:
+                    logger.warning(f"403 Forbidden with {imp}, trying next...")
+                    break  # Try next impersonation
+                else:
+                    logger.warning(f"Unexpected status {resp.status_code} with {imp}")
+
+        except Exception as e:
+            logger.warning(f"Error with impersonation {imp}: {e}")
+
+    # Fallback: try with cloudscraper
+    try:
+        import cloudscraper
+        logger.info("Trying cloudscraper fallback...")
+        scraper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "darwin", "mobile": False}
+        )
+        scraper.headers.update(HEADERS)
+
+        # Warm up
+        scraper.get("https://www.idx.co.id/id", timeout=15)
+
+        for api_url in IDX_API_URLS:
+            resp = scraper.get(api_url, params=params, timeout=30)
+            logger.info(f"Cloudscraper API status: {resp.status_code}")
             if resp.status_code == 200:
                 data = resp.json()
-                # Try multiple possible keys for the results array
-                results = (data.get("Results", []) or
-                          data.get("results", []) or
-                          data.get("Replies", []) or
-                          data.get("replies", []) or
-                          data.get("Data", []) or
-                          data.get("data", []))
-
-                # If data itself is a list
-                if isinstance(data, list):
-                    results = data
-
+                results = extract_results(data)
                 if results:
-                    logger.info(f"Found {len(results)} announcements")
-                    # Log first result keys for debugging
-                    if results:
-                        logger.info(f"First result keys: {list(results[0].keys()) if isinstance(results[0], dict) else 'not a dict'}")
-                    return results, session
-                else:
-                    logger.warning(f"API returned OK but no results. Response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
-                    # Log a snippet of response for debugging
-                    resp_text = resp.text[:500]
-                    logger.info(f"Response snippet: {resp_text}")
-        except Exception as e:
-            logger.warning(f"Error with {api_url}: {e}")
-
-    logger.warning("API failed, trying HTML fallback")
-    return fetch_via_html(session, days_back), session
-
-
-def fetch_via_html(session, days_back=7):
-    """Fallback: try to find PDF links from the HTML page."""
-    try:
-        resp = session.get(
-            "https://www.idx.co.id/id/perusahaan-tercatat/keterbukaan-informasi",
-            timeout=30
-        )
-        if resp.status_code != 200:
-            return []
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        results = []
-        for link in soup.find_all("a", href=True):
-            href = link["href"]
-            if "lamp1" in href.lower() and href.endswith(".pdf"):
-                full_url = href if href.startswith("http") else "https://www.idx.co.id" + href
-                results.append({"Attachments": [{"FileUrl": full_url}]})
-        return results
+                    logger.info(f"Found {len(results)} announcements via cloudscraper")
+                    # Wrap cloudscraper in a compatible object
+                    return results, scraper
+    except ImportError:
+        logger.warning("cloudscraper not installed, skipping")
     except Exception as e:
-        logger.error(f"HTML fallback failed: {e}")
-        return []
+        logger.warning(f"Cloudscraper failed: {e}")
+
+    # Fallback: plain requests with warm-up
+    try:
+        logger.info("Trying plain requests with session warm-up...")
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        session.get("https://www.idx.co.id/id", timeout=15)
+        for api_url in IDX_API_URLS:
+            resp = session.get(api_url, params=params, timeout=30)
+            logger.info(f"Plain requests API status: {resp.status_code}")
+            if resp.status_code == 200:
+                data = resp.json()
+                results = extract_results(data)
+                if results:
+                    logger.info(f"Found {len(results)} announcements via plain requests")
+                    return results, session
+    except Exception as e:
+        logger.warning(f"Plain requests failed: {e}")
+
+    logger.error("All methods failed to fetch announcements")
+    return [], requests.Session()
+
+
+def extract_results(data):
+    """Extract results array from API response."""
+    if isinstance(data, list):
+        return data
+    for key in ["Results", "results", "Replies", "replies", "Data", "data",
+                 "Announcement", "announcement", "Items", "items"]:
+        val = data.get(key)
+        if val and isinstance(val, list) and len(val) > 0:
+            return val
+    return []
 
 
 def get_pdf_url(announcement):
