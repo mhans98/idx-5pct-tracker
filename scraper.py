@@ -1,6 +1,7 @@
 """
-IDX 5% Shareholder PDF Scraper
-Fetches and parses KSEI 5% shareholder reports from IDX.co.id
+IDX 5% Shareholder PDF Parser
+Parses KSEI 5% shareholder PDFs that are manually uploaded.
+No web scraping needed.
 """
 
 import re
@@ -10,9 +11,6 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import requests
-from curl_cffi import requests as cffi_requests
-from bs4 import BeautifulSoup
 import pdfplumber
 
 logger = logging.getLogger(__name__)
@@ -22,210 +20,15 @@ DATA_DIR = BASE_DIR / "data"
 PDF_DIR = DATA_DIR / "pdfs"
 JSON_DIR = DATA_DIR / "json"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-    "Referer": "https://www.idx.co.id/id/perusahaan-tercatat/keterbukaan-informasi",
-    "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"macOS"',
-}
-
-IDX_API_URLS = [
-    "https://www.idx.co.id/primary/ListedCompany/GetAnnouncement",
-]
-
 
 def ensure_dirs():
     PDF_DIR.mkdir(parents=True, exist_ok=True)
     JSON_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def fetch_announcements(days_back=7):
-    """Fetch 5% shareholder announcement list from IDX."""
-    today = datetime.now()
-    date_from = (today - timedelta(days=days_back)).strftime("%Y-%m-%d")
-    date_to = today.strftime("%Y-%m-%d")
-
-    params = {
-        "kodeEmiten": "",
-        "emitenType": "*",
-        "indexFrom": 0,
-        "pageSize": 100,
-        "dateFrom": date_from.replace("-", ""),
-        "dateTo": date_to.replace("-", ""),
-        "lang": "id",
-        "keyword": "5%",
-    }
-
-    # Try multiple browser impersonations
-    impersonations = ["chrome120", "chrome", "chrome110", "chrome116", "edge101", "safari15_5"]
-
-    for imp in impersonations:
-        try:
-            logger.info(f"Trying impersonation: {imp}")
-            session = cffi_requests.Session(impersonate=imp)
-
-            # WARM UP: visit homepage first to get cookies/session
-            logger.info("Warming up session with homepage visit...")
-            warmup = session.get("https://www.idx.co.id/id", timeout=15)
-            logger.info(f"Homepage status: {warmup.status_code}")
-
-            # Now try the API
-            for api_url in IDX_API_URLS:
-                logger.info(f"Trying API: {api_url}")
-                resp = session.get(api_url, params=params, timeout=30)
-                logger.info(f"API status: {resp.status_code}")
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    results = extract_results(data)
-                    if results:
-                        logger.info(f"Found {len(results)} announcements via {imp}")
-                        return results, session
-                    else:
-                        logger.warning(f"API returned OK but no results. Keys: {list(data.keys()) if isinstance(data, dict) else 'not dict'}")
-                        logger.info(f"Response snippet: {resp.text[:300]}")
-                elif resp.status_code == 403:
-                    logger.warning(f"403 Forbidden with {imp}, trying next...")
-                    break  # Try next impersonation
-                else:
-                    logger.warning(f"Unexpected status {resp.status_code} with {imp}")
-
-        except Exception as e:
-            logger.warning(f"Error with impersonation {imp}: {e}")
-
-    # Fallback: try with cloudscraper
-    try:
-        import cloudscraper
-        logger.info("Trying cloudscraper fallback...")
-        scraper = cloudscraper.create_scraper(
-            browser={"browser": "chrome", "platform": "darwin", "mobile": False}
-        )
-        scraper.headers.update(HEADERS)
-
-        # Warm up
-        scraper.get("https://www.idx.co.id/id", timeout=15)
-
-        for api_url in IDX_API_URLS:
-            resp = scraper.get(api_url, params=params, timeout=30)
-            logger.info(f"Cloudscraper API status: {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                results = extract_results(data)
-                if results:
-                    logger.info(f"Found {len(results)} announcements via cloudscraper")
-                    # Wrap cloudscraper in a compatible object
-                    return results, scraper
-    except ImportError:
-        logger.warning("cloudscraper not installed, skipping")
-    except Exception as e:
-        logger.warning(f"Cloudscraper failed: {e}")
-
-    # Fallback: plain requests with warm-up
-    try:
-        logger.info("Trying plain requests with session warm-up...")
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        session.get("https://www.idx.co.id/id", timeout=15)
-        for api_url in IDX_API_URLS:
-            resp = session.get(api_url, params=params, timeout=30)
-            logger.info(f"Plain requests API status: {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                results = extract_results(data)
-                if results:
-                    logger.info(f"Found {len(results)} announcements via plain requests")
-                    return results, session
-    except Exception as e:
-        logger.warning(f"Plain requests failed: {e}")
-
-    logger.error("All methods failed to fetch announcements")
-    return [], requests.Session()
-
-
-def extract_results(data):
-    """Extract results array from API response."""
-    if isinstance(data, list):
-        return data
-    for key in ["Results", "results", "Replies", "replies", "Data", "data",
-                 "Announcement", "announcement", "Items", "items"]:
-        val = data.get(key)
-        if val and isinstance(val, list) and len(val) > 0:
-            return val
-    return []
-
-
-def get_pdf_url(announcement):
-    """Extract PDF attachment URL from announcement - look for KSEI 5% shareholder PDFs."""
-    # Try various keys for attachments
-    for key in ["Attachments", "attachments", "AttachmentList", "attachmentList"]:
-        attachments = announcement.get(key, [])
-        if isinstance(attachments, str):
-            # Sometimes it's a direct URL string
-            if attachments.endswith(".pdf"):
-                url = attachments if attachments.startswith("http") else "https://www.idx.co.id" + attachments
-                return url
-            continue
-        for att in attachments:
-            if isinstance(att, str):
-                url = att if att.startswith("http") else "https://www.idx.co.id" + att
-                if url.endswith(".pdf"):
-                    return url
-                continue
-            for url_key in ["FileUrl", "fileUrl", "file_url", "Url", "url", "FilePath", "filePath"]:
-                url = att.get(url_key, "")
-                if url and url.endswith(".pdf"):
-                    if not url.startswith("http"):
-                        url = "https://www.idx.co.id" + url
-                    return url
-
-    # Also check for direct file path in announcement
-    for key in ["FileUrl", "fileUrl", "FilePath", "filePath", "Url", "url",
-                 "AttachmentPath", "attachmentPath", "PdfUrl", "pdfUrl"]:
-        url = announcement.get(key, "")
-        if url and url.endswith(".pdf"):
-            if not url.startswith("http"):
-                url = "https://www.idx.co.id" + url
-            return url
-
-    # Check nested "Lamp" attachments (IDX sometimes uses Lamp1, Lamp2, etc.)
-    for key in announcement:
-        val = announcement[key]
-        if isinstance(val, str) and "lamp" in key.lower() and val.endswith(".pdf"):
-            url = val if val.startswith("http") else "https://www.idx.co.id" + val
-            return url
-
-    return None
-
-
-def download_pdf(url, session):
-    """Download a PDF, return local path."""
-    filename = url.split("/")[-1]
-    if not filename.endswith(".pdf"):
-        filename += ".pdf"
-    filepath = PDF_DIR / filename
-
-    if filepath.exists():
-        logger.info(f"Already have: {filename}")
-        return filepath
-
-    try:
-        resp = session.get(url, timeout=60)
-        if resp.status_code == 200 and len(resp.content) > 1000:
-            filepath.write_bytes(resp.content)
-            logger.info(f"Downloaded: {filename} ({len(resp.content):,} bytes)")
-            return filepath
-        else:
-            logger.error(f"Download failed: status={resp.status_code}")
-    except Exception as e:
-        logger.error(f"Download error: {e}")
-    return None
-
-
 def parse_pdf(filepath):
     """Parse KSEI 5% shareholder PDF into records."""
+    filepath = Path(filepath)
     logger.info(f"Parsing: {filepath.name}")
     records = []
 
@@ -319,7 +122,6 @@ def try_extract_record(cells, d2_date, d1_date, run_date):
     if len(cells) < 5:
         return None
 
-    # Find ticker (4 uppercase letters)
     ticker = ""
     ti = -1
     for i, c in enumerate(cells):
@@ -332,14 +134,12 @@ def try_extract_record(cells, d2_date, d1_date, run_date):
 
     nama = cells[ti + 1] if ti + 1 < len(cells) else ""
 
-    # Find shareholder name (non-numeric cell after company name)
     shareholder = ""
     for j in range(ti + 2, min(ti + 5, len(cells))):
         if cells[j] and not is_num(cells[j]):
             shareholder = cells[j]
             break
 
-    # Find numeric values
     large_nums = []
     small_nums = []
     for c in cells:
@@ -398,135 +198,69 @@ def clean(s):
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
-def run_scrape(days_back=None):
+def process_uploaded_pdfs(filepaths):
     """
-    Main scrape function. Returns dict with results.
-    Called by Flask when user presses "Get Data".
-
-    Smart mode:
-      - If no existing data: fetch last 90 days (initial backfill)
-      - If existing data: fetch from last scrape date to today (incremental)
-      - days_back can override if given explicitly
+    Parse one or more uploaded PDFs. Merge with existing data.
+    Returns result dict.
     """
     ensure_dirs()
-
-    # Determine how far back to scrape
     existing = load_data()
-    is_incremental = False
-
-    if days_back is not None:
-        # Explicit override
-        pass
-    elif existing and existing.get("scraped_at"):
-        # Incremental: from last scrape to today
-        try:
-            last_scrape = datetime.fromisoformat(existing["scraped_at"])
-            delta = (datetime.now() - last_scrape).days + 1  # +1 to overlap by 1 day
-            days_back = max(delta, 2)  # minimum 2 days
-            is_incremental = True
-            logger.info(f"Incremental mode: last scrape was {delta-1} day(s) ago")
-        except Exception:
-            days_back = 90
-    else:
-        # First time: big backfill
-        days_back = 90
-        logger.info("First scrape: fetching last 90 days")
-
-    logger.info(f"Starting scrape (last {days_back} days, incremental={is_incremental})")
+    old_records = existing.get("records", []) if existing else []
 
     result = {
         "success": False,
         "scraped_at": datetime.now().isoformat(),
-        "pdfs_found": 0,
-        "pdfs_downloaded": 0,
         "pdfs_parsed": 0,
         "total_records": 0,
         "new_records": 0,
         "records": [],
         "errors": [],
-        "mode": "incremental" if is_incremental else "backfill",
-        "days_back": days_back,
     }
 
-    try:
-        announcements, session = fetch_announcements(days_back)
-        result["pdfs_found"] = len(announcements)
-
-        if not announcements:
-            result["errors"].append("No announcements found from IDX API")
-            # If incremental and no new announcements, return existing data
-            if is_incremental and existing and existing.get("records"):
-                result["records"] = existing["records"]
-                result["total_records"] = len(existing["records"])
-                result["new_records"] = 0
-                result["success"] = True
-                save_data(existing["records"], result["scraped_at"])
-            return result
-
-        new_records = []
-        for ann in announcements:
-            pdf_url = get_pdf_url(ann)
-            if not pdf_url:
-                continue
-
-            pdf_path = download_pdf(pdf_url, session)
-            if not pdf_path:
-                result["errors"].append(f"Failed to download: {pdf_url.split('/')[-1]}")
-                continue
-            result["pdfs_downloaded"] += 1
-
-            records = parse_pdf(pdf_path)
+    new_records = []
+    for fp in filepaths:
+        try:
+            records = parse_pdf(fp)
             if records:
                 result["pdfs_parsed"] += 1
                 new_records.extend(records)
             else:
-                result["errors"].append(f"No records parsed from: {pdf_path.name}")
+                result["errors"].append(f"No records found in: {Path(fp).name}")
+        except Exception as e:
+            result["errors"].append(f"Error parsing {Path(fp).name}: {str(e)}")
 
-        # Merge with existing data if incremental
-        all_records = []
-        if is_incremental and existing and existing.get("records"):
-            all_records = existing["records"] + new_records
-        else:
-            all_records = new_records
+    # Merge with existing
+    all_records = old_records + new_records
 
-        # De-duplicate by (run_date, ticker, shareholder)
-        seen = set()
-        unique = []
-        for r in all_records:
-            key = (r["run_date"], r["ticker"], r["shareholder"])
-            if key not in seen:
-                seen.add(key)
-                unique.append(r)
+    # De-duplicate
+    seen = set()
+    unique = []
+    for r in all_records:
+        key = (r["run_date"], r["ticker"], r["shareholder"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
 
-        # Sort by run_date desc, then net_change desc
-        unique.sort(key=lambda x: (x.get("run_date", ""), abs(x["net_change"])), reverse=True)
+    # Sort by run_date desc, then net_change desc
+    unique.sort(key=lambda x: (x.get("run_date", ""), abs(x["net_change"])), reverse=True)
 
-        # Count genuinely new records
-        old_keys = set()
-        if is_incremental and existing and existing.get("records"):
-            for r in existing["records"]:
-                old_keys.add((r["run_date"], r["ticker"], r["shareholder"]))
+    # Count new
+    old_keys = set()
+    for r in old_records:
+        old_keys.add((r["run_date"], r["ticker"], r["shareholder"]))
+    new_count = sum(1 for r in unique
+                    if (r["run_date"], r["ticker"], r["shareholder"]) not in old_keys)
 
-        new_count = sum(1 for r in unique
-                       if (r["run_date"], r["ticker"], r["shareholder"]) not in old_keys)
+    result["records"] = unique
+    result["total_records"] = len(unique)
+    result["new_records"] = new_count
+    result["success"] = True
 
-        result["records"] = unique
-        result["total_records"] = len(unique)
-        result["new_records"] = new_count if is_incremental else len(unique)
-        result["success"] = True
-
-        # Save combined JSON
-        save_data(unique, result["scraped_at"])
-
-    except Exception as e:
-        logger.exception("Scrape failed")
-        result["errors"].append(str(e))
-
+    save_data(unique, result["scraped_at"])
     return result
 
 
 def save_data(records, scraped_at):
-    """Save records to JSON file."""
     ensure_dirs()
     data = {
         "scraped_at": scraped_at,
@@ -540,7 +274,6 @@ def save_data(records, scraped_at):
 
 
 def load_data():
-    """Load the most recent scraped data."""
     path = JSON_DIR / "latest.json"
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
