@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 import pdfplumber
 
@@ -58,7 +59,7 @@ def fetch_announcements(days_back=7):
         "keyword": "5%",
     }
 
-    session = requests.Session()
+    session = cffi_requests.Session(impersonate="chrome")
     session.headers.update(HEADERS)
 
     for api_url in IDX_API_URLS:
