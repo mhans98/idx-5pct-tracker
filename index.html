@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDX 5% Shareholder Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #07080f;
+  --bg-card: rgba(255,255,255,0.025);
+  --border: rgba(255,255,255,0.06);
+  --text: #e2e8f0;
+  --text-dim: #64748b;
+  --text-muted: #334155;
+  --accent: #00E5A0;
+  --accent-dim: rgba(0,229,160,0.12);
+  --neg: #FF4D6A;
+  --neg-dim: rgba(255,77,106,0.1);
+  --neutral: #475569;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Outfit', -apple-system, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: linear-gradient(160deg, #07080f 0%, #0c1219 35%, #0a1428 70%, #06090f 100%);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+}
+
+::selection { background: rgba(0,229,160,0.2); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+
+.container { max-width: 1480px; margin: 0 auto; padding: 20px 24px 48px; }
+
+/* Ambient glow */
+body::before {
+  content: ''; position: fixed; top: -200px; right: -200px;
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, rgba(0,229,160,0.06) 0%, transparent 70%);
+  pointer-events: none; z-index: 0;
+}
+
+/* Header */
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
+.header-left { display: flex; flex-direction: column; gap: 6px; }
+.header-title { display: flex; align-items: center; gap: 10px; }
+.logo {
+  width: 36px; height: 36px; border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), #0088ff);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 20px rgba(0,229,160,0.25);
+  font-size: 16px;
+}
+.header h1 {
+  font-size: 26px; font-weight: 800;
+  background: linear-gradient(135deg, #fff, var(--accent));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  letter-spacing: -0.5px;
+}
+.header-sub { font-size: 13px; color: var(--text-dim); }
+.header-sub a { color: var(--text-dim); text-decoration: none; border-bottom: 1px dotted var(--text-dim); }
+
+/* Controls row */
+.controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 16px; border-radius: 9px; border: none;
+  font-family: var(--sans); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s;
+}
+.btn-primary {
+  background: var(--accent); color: #0a0e17;
+  box-shadow: 0 2px 12px rgba(0,229,160,0.3);
+}
+.btn-primary:hover { background: #00ffb0; box-shadow: 0 4px 20px rgba(0,229,160,0.4); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary {
+  background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+
+.scrape-info {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 9px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-size: 12px; color: var(--text-dim);
+}
+.scrape-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--neutral);
+}
+.scrape-dot.live { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+
+/* Stats grid */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; margin: 20px 0; }
+.stat-card {
+  padding: 15px 17px; border-radius: 12px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  transition: all 0.2s;
+}
+.stat-card:hover { border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); }
+.stat-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--text-dim); margin-bottom: 8px;
+}
+.stat-value { font-size: 24px; font-weight: 700; font-family: var(--mono); color: #f1f5f9; }
+.stat-sub { font-size: 11px; margin-top: 3px; font-weight: 500; }
+
+/* Filters */
+.filters { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.search-box {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; border-radius: 10px; flex: 1 1 250px; max-width: 380px;
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+.search-box input {
+  border: none; background: none; color: var(--text); outline: none;
+  padding: 9px 0; font-size: 13px; width: 100%; font-family: var(--sans);
+}
+.search-box input::placeholder { color: var(--neutral); }
+
+select {
+  padding: 9px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: rgba(255,255,255,0.03);
+  color: var(--text); font-size: 12px; font-family: var(--sans);
+  cursor: pointer; outline: none;
+}
+select option { background: #141820; }
+
+.filter-group {
+  display: flex; gap: 3px; border-radius: 10px; padding: 3px;
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+.filter-btn {
+  padding: 5px 11px; border-radius: 7px; border: none;
+  background: transparent; color: var(--text-dim);
+  font-size: 11px; font-weight: 500; cursor: pointer; font-family: var(--sans);
+  transition: all 0.15s;
+}
+.filter-btn.active { background: rgba(255,255,255,0.1); color: #fff; }
+
+/* Table */
+.table-wrap {
+  border-radius: 14px; overflow: hidden;
+  background: var(--bg-card); border: 1px solid var(--border);
+}
+.table-inner { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+thead tr { border-bottom: 1px solid rgba(255,255,255,0.08); }
+th {
+  padding: 11px 12px; text-align: left;
+  font-size: 10px; font-weight: 600; color: var(--neutral);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  cursor: pointer; user-select: none; white-space: nowrap;
+  transition: background 0.15s;
+}
+th:hover { background: rgba(255,255,255,0.02); }
+th.active { background: rgba(255,255,255,0.015); color: var(--text-dim); }
+th .sort-icon { font-size: 9px; margin-left: 3px; opacity: 0.4; }
+th.active .sort-icon { opacity: 1; }
+
+td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.025); }
+tr { transition: background 0.1s; }
+tr:hover { background: rgba(255,255,255,0.025); }
+
+.ticker-badge {
+  font-weight: 700; color: #f1f5f9; font-size: 12px;
+  font-family: var(--mono); background: rgba(255,255,255,0.06);
+  padding: 2px 7px; border-radius: 4px; cursor: pointer;
+  transition: background 0.15s; display: inline-block;
+}
+.ticker-badge:hover { background: var(--accent-dim); }
+
+.cell-date { color: var(--neutral); font-size: 11px; font-family: var(--mono); }
+.cell-name { color: #94a3b8; font-size: 11.5px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-holder { color: #cbd5e1; font-size: 11.5px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-num { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); }
+
+/* Ownership bar */
+.own-bar { display: flex; align-items: center; gap: 6px; }
+.own-track { width: 48px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
+.own-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.own-pct { font-size: 11px; color: #94a3b8; font-family: var(--mono); min-width: 40px; text-align: right; }
+
+/* Net change badge */
+.net-cell { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.net-badge {
+  padding: 2px 8px; border-radius: 4px; font-size: 11px;
+  font-weight: 600; font-family: var(--mono);
+}
+.net-badge.pos { background: var(--accent-dim); color: var(--accent); }
+.net-badge.neg { background: var(--neg-dim); color: var(--neg); }
+.net-badge.zero { color: var(--neutral); }
+.net-pct { font-size: 10px; font-family: var(--mono); min-width: 48px; text-align: right; opacity: 0.6; }
+
+/* Footer */
+.table-footer {
+  padding: 9px 14px; border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);
+}
+
+/* Loading overlay */
+.loading {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 64px; color: var(--neutral); gap: 12px;
+}
+.spinner {
+  width: 28px; height: 28px; border: 3px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Empty state */
+.empty {
+  text-align: center; padding: 80px 20px; color: var(--neutral);
+}
+.empty-icon { font-size: 40px; margin-bottom: 16px; opacity: 0.4; }
+.empty h3 { font-size: 16px; color: var(--text-dim); margin-bottom: 8px; }
+.empty p { font-size: 13px; max-width: 400px; margin: 0 auto 20px; line-height: 1.6; }
+
+/* Toast notification */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  padding: 12px 20px; border-radius: 10px;
+  font-size: 13px; font-weight: 500; z-index: 100;
+  transform: translateY(80px); opacity: 0;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { background: #065f46; color: #a7f3d0; border: 1px solid #059669; }
+.toast.error { background: #7f1d1d; color: #fca5a5; border: 1px solid #dc2626; }
+.toast.info { background: #1e3a5f; color: #93c5fd; border: 1px solid #3b82f6; }
+
+/* Attribution */
+.attr { text-align: center; margin-top: 28px; font-size: 11px; color: var(--text-muted); }
+.attr a { color: var(--neutral); text-decoration: none; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .container { padding: 12px 12px 32px; }
+  .header h1 { font-size: 20px; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stat-value { font-size: 18px; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="header-title">
+        <div class="logo">📊</div>
+        <h1>IDX 5% Shareholder Tracker</h1>
+      </div>
+      <div class="header-sub">
+        Major shareholder movements from KSEI daily reports •
+        <a href="https://www.idx.co.id/id/perusahaan-tercatat/keterbukaan-informasi" target="_blank">IDX Keterbukaan Informasi</a>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="scrape-info">
+        <div class="scrape-dot" id="statusDot"></div>
+        <span id="scrapeTime">No data yet</span>
+      </div>
+      <button class="btn btn-primary" id="btnScrape" onclick="triggerScrape()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        Get Data
+      </button>
+      <button class="btn btn-secondary" onclick="exportCSV()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        CSV
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats" id="statsGrid">
+    <div class="stat-card"><div class="stat-label">Total Filings</div><div class="stat-value" id="statTotal">—</div></div>
+    <div class="stat-card"><div class="stat-label">Tickers</div><div class="stat-value" id="statTickers">—</div></div>
+    <div class="stat-card"><div class="stat-label">Accumulation</div><div class="stat-value" id="statPos" style="color:var(--accent)">—</div></div>
+    <div class="stat-card"><div class="stat-label">Distribution</div><div class="stat-value" id="statNeg" style="color:var(--neg)">—</div></div>
+    <div class="stat-card">
+      <div class="stat-label">Top Mover</div>
+      <div class="stat-value" id="statTopTicker" style="font-size:18px">—</div>
+      <div class="stat-sub" id="statTopChange" style="color:var(--accent)"></div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filters">
+    <div class="search-box">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="searchInput" placeholder="Search ticker, company, shareholder..." oninput="applyFilters()">
+    </div>
+    <select id="dateFilter" onchange="applyFilters()">
+      <option value="all">All Dates</option>
+    </select>
+    <div class="filter-group">
+      <button class="filter-btn active" data-filter="all" onclick="setChangeFilter(this)">All</button>
+      <button class="filter-btn" data-filter="positive" onclick="setChangeFilter(this)">▲ Buy</button>
+      <button class="filter-btn" data-filter="negative" onclick="setChangeFilter(this)">▼ Sell</button>
+      <button class="filter-btn" data-filter="zero" onclick="setChangeFilter(this)">— Hold</button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <div id="tableContent">
+      <!-- Empty state shown by default -->
+      <div class="empty" id="emptyState">
+        <div class="empty-icon">📡</div>
+        <h3>No Data Loaded</h3>
+        <p>Press the <strong>Get Data</strong> button above to fetch the latest 7 days of 5% shareholder data from IDX.</p>
+        <button class="btn btn-primary" onclick="triggerScrape()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Get Data Now
+        </button>
+      </div>
+    </div>
+    <div class="table-footer">
+      <span id="footerCount">0 records</span>
+      <span>IDX Keterbukaan Informasi • KSEI 5% Shareholder • POJK 4/2024</span>
+    </div>
+  </div>
+
+  <div class="attr">
+    IDX 5% Shareholder Tracker •
+    Data from <a href="https://www.idx.co.id/id/perusahaan-tercatat/keterbukaan-informasi" target="_blank">idx.co.id</a>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+let allRecords = [];
+let filteredRecords = [];
+let sortKey = 'net_change';
+let sortDir = 'desc';
+let changeFilter = 'all';
+
+// ============================================================
+// FORMATTING
+// ============================================================
+function fmt(n) {
+  if (n === 0) return '0';
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (a >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (a >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
+function fmtFull(n) { return (n || 0).toLocaleString(); }
+
+function fmtDate(d) {
+  if (!d) return '—';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function fmtTimestamp(iso) {
+  if (!iso) return 'No data yet';
+  const dt = new Date(iso);
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+    ', ' + dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+function showToast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + type + ' show';
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+// ============================================================
+// SCRAPING
+// ============================================================
+async function triggerScrape() {
+  const btn = document.getElementById('btnScrape');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> Scraping...';
+
+  showToast('Fetching data from IDX... First run grabs 90 days, updates are quick.', 'info');
+
+  try {
+    // Start background scrape
+    const resp = await fetch('/api/scrape', { method: 'POST' });
+    const startData = await resp.json();
+
+    if (resp.status === 429) {
+      showToast('Scrape already in progress. Please wait...', 'info');
+    }
+
+    // Poll for completion
+    pollForCompletion();
+
+  } catch (e) {
+    showToast('Connection error: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = getDataBtnHTML();
+  }
+}
+
+function getDataBtnHTML() {
+  return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg> Get Data';
+}
+
+let pollTimer = null;
+
+function pollForCompletion() {
+  if (pollTimer) clearInterval(pollTimer);
+
+  pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/status');
+      const status = await resp.json();
+
+      const btn = document.getElementById('btnScrape');
+
+      // Update button text with progress
+      if (status.scraping) {
+        btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> ' + (status.progress || 'Scraping...');
+        return; // Keep polling
+      }
+
+      // Scraping finished!
+      clearInterval(pollTimer);
+      pollTimer = null;
+      btn.disabled = false;
+      btn.innerHTML = getDataBtnHTML();
+
+      // Fetch the data
+      const dataResp = await fetch('/api/data');
+      const data = await dataResp.json();
+
+      if (data.records && data.records.length > 0) {
+        allRecords = data.records;
+        updateScrapeTime(data.scraped_at);
+        populateDateFilter();
+        applyFilters();
+        updateStats();
+        showToast('✓ Got ' + data.total_records + ' records!', 'success');
+      } else {
+        showToast(status.progress || 'No records found. IDX may not have data for this period.', 'error');
+      }
+
+    } catch (e) {
+      console.warn('Poll error:', e);
+      // Keep polling, might be temporary
+    }
+  }, 3000); // Poll every 3 seconds
+}
+
+// ============================================================
+// LOAD EXISTING DATA ON PAGE LOAD
+// ============================================================
+async function loadExisting() {
+  try {
+    const resp = await fetch('/api/data');
+    const data = await resp.json();
+    if (data.records && data.records.length > 0) {
+      allRecords = data.records;
+      updateScrapeTime(data.scraped_at);
+      populateDateFilter();
+      applyFilters();
+      updateStats();
+    }
+  } catch (e) {
+    console.log('No existing data');
+  }
+}
+
+// ============================================================
+// UI UPDATES
+// ============================================================
+function updateScrapeTime(iso) {
+  const dot = document.getElementById('statusDot');
+  const time = document.getElementById('scrapeTime');
+  dot.classList.add('live');
+  time.innerHTML = 'Latest scrape: <strong style="color:#e2e8f0">' + fmtTimestamp(iso) + '</strong>';
+}
+
+function updateStats() {
+  const pos = filteredRecords.filter(r => r.net_change > 0);
+  const neg = filteredRecords.filter(r => r.net_change < 0);
+  const tickers = new Set(filteredRecords.map(r => r.ticker)).size;
+
+  document.getElementById('statTotal').textContent = filteredRecords.length;
+  document.getElementById('statTickers').textContent = tickers;
+  document.getElementById('statPos').textContent = pos.length;
+  document.getElementById('statNeg').textContent = neg.length;
+
+  if (pos.length) {
+    const top = pos.reduce((a, b) => a.net_change > b.net_change ? a : b);
+    document.getElementById('statTopTicker').textContent = top.ticker;
+    document.getElementById('statTopChange').textContent = '+' + fmt(top.net_change);
+    document.getElementById('statTopChange').style.color = 'var(--accent)';
+  } else if (neg.length) {
+    const top = neg.reduce((a, b) => a.net_change < b.net_change ? a : b);
+    document.getElementById('statTopTicker').textContent = top.ticker;
+    document.getElementById('statTopChange').textContent = fmt(top.net_change);
+    document.getElementById('statTopChange').style.color = 'var(--neg)';
+  } else {
+    document.getElementById('statTopTicker').textContent = '—';
+    document.getElementById('statTopChange').textContent = '';
+  }
+}
+
+function populateDateFilter() {
+  const dates = [...new Set(allRecords.map(r => r.run_date))].sort().reverse();
+  const sel = document.getElementById('dateFilter');
+  sel.innerHTML = '<option value="all">All Dates (' + dates.length + ')</option>';
+  dates.forEach(d => {
+    sel.innerHTML += '<option value="' + d + '">' + fmtDate(d) + '</option>';
+  });
+}
+
+// ============================================================
+// FILTERING & SORTING
+// ============================================================
+function setChangeFilter(btn) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  changeFilter = btn.dataset.filter;
+  applyFilters();
+}
+
+function applyFilters() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const dateVal = document.getElementById('dateFilter').value;
+
+  filteredRecords = allRecords.filter(r => {
+    if (search && !r.ticker.toLowerCase().includes(search) &&
+        !r.nama_emiten.toLowerCase().includes(search) &&
+        !r.shareholder.toLowerCase().includes(search)) return false;
+    if (dateVal !== 'all' && r.run_date !== dateVal) return false;
+    if (changeFilter === 'positive' && r.net_change <= 0) return false;
+    if (changeFilter === 'negative' && r.net_change >= 0) return false;
+    if (changeFilter === 'zero' && r.net_change !== 0) return false;
+    return true;
+  });
+
+  // Sort
+  filteredRecords.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+    if (sortDir === 'asc') return av < bv ? -1 : av > bv ? 1 : 0;
+    return av > bv ? -1 : av < bv ? 1 : 0;
+  });
+
+  renderTable();
+  updateStats();
+}
+
+function handleSort(key) {
+  if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  else { sortKey = key; sortDir = 'desc'; }
+  applyFilters();
+}
+
+// ============================================================
+// TABLE RENDERING
+// ============================================================
+function renderTable() {
+  const container = document.getElementById('tableContent');
+
+  if (allRecords.length === 0) {
+    // Show empty state
+    container.innerHTML = `
+      <div class="empty" id="emptyState">
+        <div class="empty-icon">📡</div>
+        <h3>No Data Loaded</h3>
+        <p>Press the <strong>Get Data</strong> button above to fetch the latest 7 days of 5% shareholder data from IDX.</p>
+        <button class="btn btn-primary" onclick="triggerScrape()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Get Data Now
+        </button>
+      </div>`;
+    document.getElementById('footerCount').textContent = '0 records';
+    return;
+  }
+
+  if (filteredRecords.length === 0) {
+    container.innerHTML = `
+      <div class="loading" style="padding:48px">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        <span>No matching records</span>
+      </div>`;
+    document.getElementById('footerCount').textContent = '0 of ' + allRecords.length + ' records';
+    return;
+  }
+
+  const cols = [
+    { key: 'run_date', label: 'Date' },
+    { key: 'ticker', label: 'Ticker' },
+    { key: 'nama_emiten', label: 'Emiten' },
+    { key: 'shareholder', label: 'Shareholder' },
+    { key: 'pct_d1', label: 'Ownership', align: 'right' },
+    { key: 'shares_d2', label: 'Shares D-2', align: 'right' },
+    { key: 'shares_d1', label: 'Shares D-1', align: 'right' },
+    { key: 'net_change', label: 'Net Change', align: 'right' },
+  ];
+
+  let html = '<div class="table-inner"><table><thead><tr>';
+  cols.forEach(c => {
+    const isActive = sortKey === c.key;
+    const arrow = isActive ? (sortDir === 'asc' ? '▲' : '▼') : '⇅';
+    html += `<th class="${isActive ? 'active' : ''}" style="text-align:${c.align||'left'}" onclick="handleSort('${c.key}')">
+      ${c.label} <span class="sort-icon">${arrow}</span>
+    </th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  filteredRecords.forEach(r => {
+    const pctColor = (r.pct_d1||0) > 50 ? '#f59e0b' : (r.pct_d1||0) > 20 ? 'var(--accent)' : '#818cf8';
+    const pctWidth = Math.min(r.pct_d1 || 0, 100);
+
+    let netClass = 'zero', netPrefix = '';
+    if (r.net_change > 0) { netClass = 'pos'; netPrefix = '+'; }
+    else if (r.net_change < 0) { netClass = 'neg'; }
+
+    const changePct = r.shares_d2 ? ((r.net_change / r.shares_d2) * 100).toFixed(2) : '0.00';
+
+    html += `<tr>
+      <td class="cell-date">${fmtDate(r.run_date)}</td>
+      <td><span class="ticker-badge">${r.ticker}</span></td>
+      <td class="cell-name" title="${r.nama_emiten}">${r.nama_emiten}</td>
+      <td class="cell-holder" title="${r.shareholder}">${r.shareholder}</td>
+      <td style="text-align:right">
+        ${r.pct_d1 ? `<div class="own-bar">
+          <div class="own-track"><div class="own-fill" style="width:${pctWidth}%;background:${pctColor}"></div></div>
+          <span class="own-pct">${r.pct_d1.toFixed(1)}%</span>
+        </div>` : '<span style="color:var(--text-muted)">—</span>'}
+      </td>
+      <td class="cell-num">${fmtFull(r.shares_d2)}</td>
+      <td class="cell-num" style="color:#94a3b8">${fmtFull(r.shares_d1)}</td>
+      <td>
+        <div class="net-cell">
+          <span class="net-badge ${netClass}">${netPrefix}${fmt(r.net_change)}</span>
+          <span class="net-pct" style="color:${r.net_change > 0 ? 'var(--accent)' : r.net_change < 0 ? 'var(--neg)' : 'var(--neutral)'}">
+            ${r.net_change !== 0 ? netPrefix + changePct + '%' : '—'}
+          </span>
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+  document.getElementById('footerCount').textContent =
+    filteredRecords.length + ' of ' + allRecords.length + ' records';
+}
+
+// ============================================================
+// CSV EXPORT
+// ============================================================
+function exportCSV() {
+  if (!filteredRecords.length) { showToast('No data to export', 'error'); return; }
+
+  const h = ['Run Date','Ticker','Nama Emiten','Shareholder','% Ownership D-2','Shares D-2','% Ownership D-1','Shares D-1','Net Change','% Change'];
+  const rows = filteredRecords.map(r => [
+    r.run_date, r.ticker, r.nama_emiten, r.shareholder,
+    r.pct_d2 || '', r.shares_d2, r.pct_d1 || '', r.shares_d1, r.net_change,
+    r.shares_d2 ? ((r.net_change/r.shares_d2)*100).toFixed(4)+'%' : '0%'
+  ]);
+
+  const csv = [h,...rows].map(r => r.map(c => '"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'idx_5pct_shareholders_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  showToast('CSV exported (' + filteredRecords.length + ' records)', 'success');
+}
+
+// ============================================================
+// INIT
+// ============================================================
+window.addEventListener('DOMContentLoaded', loadExisting);
+</script>
+</body>
+</html>
