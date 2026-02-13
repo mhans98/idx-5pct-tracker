@@ -1,20 +1,15 @@
 """
 IDX 5% Shareholder Tracker - Flask App
-Serves the dashboard UI and provides scraper API endpoints.
-Deploy on Render free tier.
-
-Scraping runs in a BACKGROUND THREAD so it won't hit
-Render's 120s request timeout (30 days of PDFs can take 2-3 min).
+Upload KSEI PDFs manually, dashboard parses and displays data.
 """
 
 import os
 import logging
 import threading
-from datetime import datetime
-from flask import Flask, render_template, jsonify
-from scraper import run_scrape, load_data
+from pathlib import Path
+from flask import Flask, render_template, jsonify, request
+from scraper import process_uploaded_pdfs, load_data, ensure_dirs, PDF_DIR
 
-# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -22,100 +17,76 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder=".")
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload
 
-# In-memory state
 _cached_data = None
-_scraping = False
-_scrape_progress = ""
-
-
-def background_scrape():
-    """Run scrape in background thread."""
-    global _cached_data, _scraping, _scrape_progress
-    try:
-        # Check if this is first run or incremental
-        existing = load_data()
-        if existing and existing.get("records"):
-            _scrape_progress = "Incremental update — fetching new data since last scrape..."
-        else:
-            _scrape_progress = "First run — fetching last 90 days from IDX..."
-
-        result = run_scrape()  # Smart mode: auto-decides days_back
-        _cached_data = result
-
-        if result.get("success") and result.get("total_records", 0) > 0:
-            mode = result.get("mode", "backfill")
-            new_ct = result.get("new_records", 0)
-            total = result["total_records"]
-            if mode == "incremental":
-                _scrape_progress = f"Done! +{new_ct} new records ({total} total)"
-            else:
-                _scrape_progress = f"Done! {total} records from {result.get('pdfs_parsed', 0)} PDFs (90-day backfill)"
-        else:
-            errors = result.get("errors", [])
-            _scrape_progress = f"Completed with issues: {errors[0] if errors else 'No records found'}"
-
-        logger.info(f"Background scrape finished: {result.get('total_records', 0)} records, mode={result.get('mode')}")
-    except Exception as e:
-        logger.exception("Background scrape failed")
-        _scrape_progress = f"Error: {str(e)}"
-    finally:
-        _scraping = False
+_processing = False
+_progress = ""
 
 
 @app.route("/")
 def index():
-    """Serve the dashboard."""
     return render_template("index.html")
 
 
-@app.route("/api/scrape", methods=["POST"])
-def api_scrape():
-    """Start a background scrape (called by 'Get Data' button)."""
-    global _scraping, _scrape_progress
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    """Handle PDF file uploads."""
+    global _cached_data, _processing, _progress
 
-    if _scraping:
-        return jsonify({
-            "started": False,
-            "message": "Scrape already in progress",
-            "progress": _scrape_progress,
-        }), 429
+    if _processing:
+        return jsonify({"success": False, "error": "Already processing"}), 429
 
-    _scraping = True
-    _scrape_progress = "Starting..."
+    files = request.files.getlist("pdfs")
+    if not files or all(f.filename == "" for f in files):
+        return jsonify({"success": False, "error": "No files uploaded"}), 400
 
-    thread = threading.Thread(target=background_scrape, daemon=True)
+    ensure_dirs()
+    saved_paths = []
+    for f in files:
+        if f.filename and f.filename.lower().endswith(".pdf"):
+            filepath = PDF_DIR / f.filename
+            f.save(str(filepath))
+            saved_paths.append(str(filepath))
+            logger.info(f"Saved upload: {f.filename}")
+
+    if not saved_paths:
+        return jsonify({"success": False, "error": "No valid PDF files found"}), 400
+
+    _processing = True
+    _progress = f"Parsing {len(saved_paths)} PDF(s)..."
+
+    def process():
+        global _cached_data, _processing, _progress
+        try:
+            result = process_uploaded_pdfs(saved_paths)
+            _cached_data = result
+            if result["success"]:
+                _progress = f"Done! +{result['new_records']} new records ({result['total_records']} total)"
+            else:
+                _progress = f"Issues: {result['errors'][0] if result['errors'] else 'Unknown'}"
+        except Exception as e:
+            logger.exception("Processing failed")
+            _progress = f"Error: {str(e)}"
+        finally:
+            _processing = False
+
+    thread = threading.Thread(target=process, daemon=True)
     thread.start()
 
-    logger.info("Background scrape started (smart mode)")
     return jsonify({
         "started": True,
-        "message": "Scrape started in background. Polling for status...",
-    })
-
-
-@app.route("/api/status")
-def api_status():
-    """Poll this to check if scrape is done."""
-    return jsonify({
-        "status": "running",
-        "scraping": _scraping,
-        "progress": _scrape_progress,
-        "has_data": _cached_data is not None and bool(_cached_data.get("records")),
-        "last_scrape": _cached_data.get("scraped_at") if _cached_data else None,
-        "total_records": _cached_data.get("total_records", 0) if _cached_data else 0,
+        "files": len(saved_paths),
+        "message": f"Processing {len(saved_paths)} PDF(s)...",
     })
 
 
 @app.route("/api/data")
 def api_data():
-    """Return cached data or load from disk."""
     global _cached_data
-
     if _cached_data and _cached_data.get("records"):
         return jsonify(_cached_data)
 
-    # Try loading from disk
     disk_data = load_data()
     if disk_data:
         _cached_data = disk_data
@@ -126,8 +97,30 @@ def api_data():
         "scraped_at": None,
         "total_records": 0,
         "records": [],
-        "message": "No data yet. Press 'Get Data' to scrape."
     })
+
+
+@app.route("/api/status")
+def api_status():
+    return jsonify({
+        "status": "running",
+        "processing": _processing,
+        "progress": _progress,
+        "has_data": _cached_data is not None and bool(_cached_data.get("records")),
+        "last_scrape": _cached_data.get("scraped_at") if _cached_data else None,
+        "total_records": _cached_data.get("total_records", 0) if _cached_data else 0,
+    })
+
+
+@app.route("/api/clear", methods=["POST"])
+def api_clear():
+    """Clear all data and start fresh."""
+    global _cached_data
+    _cached_data = None
+    json_path = Path("data/json/latest.json")
+    if json_path.exists():
+        json_path.unlink()
+    return jsonify({"success": True, "message": "Data cleared"})
 
 
 if __name__ == "__main__":
